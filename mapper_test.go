@@ -255,6 +255,17 @@ func TestStructMapper(t *testing.T) {
 		ExpectedVal: User{ID: 1, Name: "The Name"},
 	})
 
+	// Each occurrence of a duplicated column scans into the same field,
+	// so the value of the last occurrence wins.
+	RunStructMapperTest(t, "duplicate columns", MapperTest[User]{
+		row: &Row{
+			columns: columnNames("id", "id"),
+		},
+		scanned:     []any{1, 2},
+		Mapper:      StructMapper[User](),
+		ExpectedVal: User{ID: 2},
+	})
+
 	RunStructMapperTest(t, "with pointer columns 1", MapperTest[PtrUser1]{
 		row: &Row{
 			columns: columnNames("id", "name", "created_at", "updated_at"),

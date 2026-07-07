@@ -310,6 +310,25 @@ func TestStruct(t *testing.T) {
 	})
 }
 
+func TestStructDuplicateColumns(t *testing.T) {
+	// Duplicate column names in the result set (e.g. `SELECT id, id`)
+	// all scan into the same field.
+	// Previously, every duplicate was scheduled to the first occurrence,
+	// leaving the others without a destination and failing with
+	// "no destination for column id".
+	user1 := User{ID: 1, Name: "foo"}
+	user2 := User{ID: 2, Name: "bar"}
+
+	testQuery(t, "duplicate columns", queryCase[User]{
+		columns:   strstr{{"id", "int64"}, {"name", "string"}},
+		rows:      rows{[]any{1, "foo"}, []any{2, "bar"}},
+		query:     []string{"id", "id", "name"},
+		mapper:    StructMapper[User](),
+		expectOne: user1,
+		expectAll: []User{user1, user2},
+	})
+}
+
 func TestAllowUnknownColumns(t *testing.T) {
 	type testStruct struct {
 		ID  int64
