@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -18,6 +19,7 @@ import (
 var (
 	db       *sql.DB
 	dataSize = 100
+	wideSize = 1000
 )
 
 func TestMain(m *testing.M) {
@@ -35,6 +37,19 @@ func TestMain(m *testing.M) {
 	err = prepareData(ctx)
 	if err != nil {
 		panic(err)
+	}
+
+	for _, w := range []struct {
+		table   string
+		numCols int
+	}{
+		{"wide5", 5},
+		{"wide15", 15},
+		{"wide45", 45},
+	} {
+		if err := prepareWideData(ctx, w.table, w.numCols); err != nil {
+			panic(err)
+		}
 	}
 
 	exitVal := m.Run()
@@ -78,6 +93,28 @@ func BenchmarkScanOne(b *testing.B) {
 	}
 }
 
+func BenchmarkScanWide5(b *testing.B)  { benchmarkScanWide[Wide5](b, "wide5") }
+func BenchmarkScanWide15(b *testing.B) { benchmarkScanWide[Wide15](b, "wide15") }
+func BenchmarkScanWide45(b *testing.B) { benchmarkScanWide[Wide45](b, "wide45") }
+
+func benchmarkScanWide[T any](b *testing.B, table string) {
+	b.StopTimer()
+	ctx := context.Background()
+
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		rows, err := db.Query("SELECT|" + table + "||")
+		if err != nil {
+			panic(err)
+		}
+		b.StartTimer()
+		if _, err := AllFromRows(ctx, StructMapper[T](), rows); err != nil {
+			panic(err)
+		}
+		rows.Close()
+	}
+}
+
 func prepareData(ctx context.Context) error {
 	create := "CREATE|user|id=int64,username=string,password=string"
 	create += ",email=string,mobile_phone=string,company=string,avatar_url=string"
@@ -106,6 +143,107 @@ func prepareData(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func prepareWideData(ctx context.Context, table string, numCols int) error {
+	colDefs := make([]string, numCols)
+	colAssigns := make([]string, numCols)
+	for i := range colDefs {
+		colDefs[i] = fmt.Sprintf("col_%d=string", i)
+		colAssigns[i] = fmt.Sprintf("col_%d=?", i)
+	}
+
+	create := fmt.Sprintf("CREATE|%s|%s", table, strings.Join(colDefs, ","))
+	if _, err := db.ExecContext(ctx, create); err != nil {
+		return err
+	}
+
+	insert := fmt.Sprintf("INSERT|%s|%s", table, strings.Join(colAssigns, ","))
+	args := make([]any, numCols)
+	for i := 0; i < wideSize; i++ {
+		for c := range args {
+			args[c] = fmt.Sprintf("value_%d_%d", i, c)
+		}
+		if _, err := db.ExecContext(ctx, insert, args...); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+type Wide5 struct {
+	Col0 string `db:"col_0"`
+	Col1 string `db:"col_1"`
+	Col2 string `db:"col_2"`
+	Col3 string `db:"col_3"`
+	Col4 string `db:"col_4"`
+}
+
+type Wide15 struct {
+	Col0  string `db:"col_0"`
+	Col1  string `db:"col_1"`
+	Col2  string `db:"col_2"`
+	Col3  string `db:"col_3"`
+	Col4  string `db:"col_4"`
+	Col5  string `db:"col_5"`
+	Col6  string `db:"col_6"`
+	Col7  string `db:"col_7"`
+	Col8  string `db:"col_8"`
+	Col9  string `db:"col_9"`
+	Col10 string `db:"col_10"`
+	Col11 string `db:"col_11"`
+	Col12 string `db:"col_12"`
+	Col13 string `db:"col_13"`
+	Col14 string `db:"col_14"`
+}
+
+type Wide45 struct {
+	Col0  string `db:"col_0"`
+	Col1  string `db:"col_1"`
+	Col2  string `db:"col_2"`
+	Col3  string `db:"col_3"`
+	Col4  string `db:"col_4"`
+	Col5  string `db:"col_5"`
+	Col6  string `db:"col_6"`
+	Col7  string `db:"col_7"`
+	Col8  string `db:"col_8"`
+	Col9  string `db:"col_9"`
+	Col10 string `db:"col_10"`
+	Col11 string `db:"col_11"`
+	Col12 string `db:"col_12"`
+	Col13 string `db:"col_13"`
+	Col14 string `db:"col_14"`
+	Col15 string `db:"col_15"`
+	Col16 string `db:"col_16"`
+	Col17 string `db:"col_17"`
+	Col18 string `db:"col_18"`
+	Col19 string `db:"col_19"`
+	Col20 string `db:"col_20"`
+	Col21 string `db:"col_21"`
+	Col22 string `db:"col_22"`
+	Col23 string `db:"col_23"`
+	Col24 string `db:"col_24"`
+	Col25 string `db:"col_25"`
+	Col26 string `db:"col_26"`
+	Col27 string `db:"col_27"`
+	Col28 string `db:"col_28"`
+	Col29 string `db:"col_29"`
+	Col30 string `db:"col_30"`
+	Col31 string `db:"col_31"`
+	Col32 string `db:"col_32"`
+	Col33 string `db:"col_33"`
+	Col34 string `db:"col_34"`
+	Col35 string `db:"col_35"`
+	Col36 string `db:"col_36"`
+	Col37 string `db:"col_37"`
+	Col38 string `db:"col_38"`
+	Col39 string `db:"col_39"`
+	Col40 string `db:"col_40"`
+	Col41 string `db:"col_41"`
+	Col42 string `db:"col_42"`
+	Col43 string `db:"col_43"`
+	Col44 string `db:"col_44"`
 }
 
 type Userss struct {

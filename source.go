@@ -240,7 +240,7 @@ func (s *mapperSourceImpl) setMappings(typ reflect.Type, prefix string, v visite
 func filterColumns(c cols, m mapping, prefix string) (mapping, error) {
 	// Filter the mapping so we only ask for the available columns
 	filtered := make(mapping, 0, len(c))
-	for _, name := range c {
+	for colIdx, name := range c {
 		key := name
 		if prefix != "" {
 			if !strings.HasPrefix(name, prefix) {
@@ -253,6 +253,7 @@ func filterColumns(c cols, m mapping, prefix string) (mapping, error) {
 		for _, info := range m {
 			if key == info.name {
 				info.name = name
+				info.colIndex = colIdx
 				filtered = append(filtered, info)
 				break
 			}

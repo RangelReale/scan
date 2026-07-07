@@ -196,7 +196,7 @@ func (s regular[T]) regular() (func(*Row) (any, error), func(any) (T, error)) {
 				}
 
 				fv := row.FieldByIndex(info.position)
-				v.ScheduleScanByNameX(info.name, fv.Addr())
+				v.ScheduleScanByIndexX(info.colIndex, fv.Addr())
 			}
 
 			return row, nil
@@ -229,7 +229,7 @@ func (s regular[T]) allOptions() (func(*Row) (any, error), func(any) (T, error))
 					row[i] = reflect.New(ft)
 				}
 
-				v.ScheduleScanByNameX(info.name, row[i])
+				v.ScheduleScanByIndexX(info.colIndex, row[i])
 			}
 
 			return row, nil
