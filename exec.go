@@ -122,6 +122,10 @@ func Each[T any](ctx context.Context, exec Queryer, m Mapper[T], query string, a
 				return
 			}
 		}
+
+		if err := rows.Err(); err != nil {
+			yield(*new(T), err)
+		}
 	}
 }
 
