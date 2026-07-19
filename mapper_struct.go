@@ -186,6 +186,11 @@ func (s regular[T]) regular() (func(*Row) (any, error), func(any) (T, error)) {
 	}
 	inits := uniqueInits(s.filtered)
 
+	// scanOneRow calls before/scan/after strictly in sequence for each row
+	// and the mapper is built once per query, so the link holder can be
+	// reused across rows, avoiding a per-row boxing allocation.
+	link := new(rowLink)
+
 	return func(v *Row) (any, error) {
 			row := reflect.New(styp).Elem()
 
@@ -202,9 +207,11 @@ func (s regular[T]) regular() (func(*Row) (any, error), func(any) (T, error)) {
 				v.ScheduleScanByIndexX(info.colIndex, fv.Addr())
 			}
 
-			return row, nil
+			link.v = row
+
+			return link, nil
 		}, func(v any) (T, error) {
-			row := v.(reflect.Value)
+			row := v.(*rowLink).v
 
 			if s.isPointer {
 				row = row.Addr()
@@ -213,6 +220,10 @@ func (s regular[T]) regular() (func(*Row) (any, error), func(any) (T, error)) {
 			return row.Interface().(T), nil
 		}
 }
+
+// rowLink carries the in-progress row value from the before function to the
+// after function without boxing a new interface value on every row.
+type rowLink struct{ v reflect.Value }
 
 // uniqueInits collects the nested-pointer init paths of all filtered columns,
 // de-duplicated, preserving ancestor-before-descendant order.
@@ -255,20 +266,25 @@ func (s regular[T]) allOptions() (func(*Row) (any, error), func(any) (T, error))
 	colNames := s.filtered.cols()
 	inits := uniqueInits(s.filtered)
 
-	return func(v *Row) (any, error) {
-			row := make([]reflect.Value, len(s.filtered))
+	// scanOneRow calls before/scan/after strictly in sequence for each row
+	// and the mapper is built once per query, so the destinations slice can
+	// be reused across rows — like the links slice in [Mod] and the scan
+	// buffers in [Row]. Boxing it once also avoids a per-row allocation.
+	scratch := make([]reflect.Value, len(s.filtered))
+	var link any = scratch
 
+	return func(v *Row) (any, error) {
 			for i, info := range s.filtered {
 				if s.converter != nil {
-					row[i] = s.converter.TypeToDestination(ftypes[i])
+					scratch[i] = s.converter.TypeToDestination(ftypes[i])
 				} else {
-					row[i] = reflect.New(ftypes[i])
+					scratch[i] = reflect.New(ftypes[i])
 				}
 
-				v.ScheduleScanByIndexX(info.colIndex, row[i])
+				v.ScheduleScanByIndexX(info.colIndex, scratch[i])
 			}
 
-			return row, nil
+			return link, nil
 		}, func(v any) (T, error) {
 			vals := v.([]reflect.Value)
 
