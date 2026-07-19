@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strconv"
 )
 
 // CtxKeyAllowUnknownColumns makes it possible to allow unknown columns using the context
@@ -177,24 +178,26 @@ type regular[T any] struct {
 }
 
 func (s regular[T]) regular() (func(*Row) (any, error), func(any) (T, error)) {
+	// The mapping is fixed for the duration of the query, so everything that
+	// only depends on it is resolved here, once, instead of once per row.
+	styp := s.typ
+	if s.isPointer {
+		styp = s.typ.Elem()
+	}
+	inits := uniqueInits(s.filtered)
+
 	return func(v *Row) (any, error) {
-			var row reflect.Value
-			if s.isPointer {
-				row = reflect.New(s.typ.Elem()).Elem()
-			} else {
-				row = reflect.New(s.typ).Elem()
+			row := reflect.New(styp).Elem()
+
+			// row is freshly zero, so each unique nested pointer is
+			// initialized exactly once, ancestors before descendants,
+			// before any field address is scheduled
+			for _, path := range inits {
+				pv := row.FieldByIndex(path)
+				pv.Set(reflect.New(pv.Type().Elem()))
 			}
 
 			for _, info := range s.filtered {
-				for _, v := range info.init {
-					pv := row.FieldByIndex(v)
-					if !pv.IsZero() {
-						continue
-					}
-
-					pv.Set(reflect.New(pv.Type().Elem()))
-				}
-
 				fv := row.FieldByIndex(info.position)
 				v.ScheduleScanByIndexX(info.colIndex, fv.Addr())
 			}
@@ -211,22 +214,55 @@ func (s regular[T]) regular() (func(*Row) (any, error), func(any) (T, error)) {
 		}
 }
 
+// uniqueInits collects the nested-pointer init paths of all filtered columns,
+// de-duplicated, preserving ancestor-before-descendant order.
+func uniqueInits(m mapping) [][]int {
+	var out [][]int
+	seen := make(map[string]struct{})
+	var key []byte
+	for _, info := range m {
+		for _, path := range info.init {
+			key = key[:0]
+			for _, i := range path {
+				key = strconv.AppendInt(key, int64(i), 10)
+				key = append(key, '.')
+			}
+			if _, ok := seen[string(key)]; ok {
+				continue
+			}
+			seen[string(key)] = struct{}{}
+			out = append(out, path)
+		}
+	}
+
+	return out
+}
+
 func (s regular[T]) allOptions() (func(*Row) (any, error), func(any) (T, error)) {
+	// The mapping is fixed for the duration of the query: the field types,
+	// the validator's column names and the nested-pointer init paths are all
+	// resolved here, once, instead of once per row (per column).
+	styp := s.typ
+	if s.isPointer {
+		styp = s.typ.Elem()
+	}
+
+	ftypes := make([]reflect.Type, len(s.filtered))
+	for i, info := range s.filtered {
+		ftypes[i] = styp.FieldByIndex(info.position).Type
+	}
+
+	colNames := s.filtered.cols()
+	inits := uniqueInits(s.filtered)
+
 	return func(v *Row) (any, error) {
 			row := make([]reflect.Value, len(s.filtered))
 
 			for i, info := range s.filtered {
-				var ft reflect.Type
-				if s.isPointer {
-					ft = s.typ.Elem().FieldByIndex(info.position).Type
-				} else {
-					ft = s.typ.FieldByIndex(info.position).Type
-				}
-
 				if s.converter != nil {
-					row[i] = s.converter.TypeToDestination(ft)
+					row[i] = s.converter.TypeToDestination(ftypes[i])
 				} else {
-					row[i] = reflect.New(ft)
+					row[i] = reflect.New(ftypes[i])
 				}
 
 				v.ScheduleScanByIndexX(info.colIndex, row[i])
@@ -236,28 +272,21 @@ func (s regular[T]) allOptions() (func(*Row) (any, error), func(any) (T, error))
 		}, func(v any) (T, error) {
 			vals := v.([]reflect.Value)
 
-			if s.validator != nil && !s.validator(s.filtered.cols(), vals) {
+			if s.validator != nil && !s.validator(colNames, vals) {
 				var t T
 				return t, nil
 			}
 
-			var row reflect.Value
-			if s.isPointer {
-				row = reflect.New(s.typ.Elem()).Elem()
-			} else {
-				row = reflect.New(s.typ).Elem()
+			row := reflect.New(styp).Elem()
+
+			// row is freshly zero, so each unique nested pointer is
+			// initialized exactly once, ancestors before descendants
+			for _, path := range inits {
+				pv := row.FieldByIndex(path)
+				pv.Set(reflect.New(pv.Type().Elem()))
 			}
 
 			for i, info := range s.filtered {
-				for _, v := range info.init {
-					pv := row.FieldByIndex(v)
-					if !pv.IsZero() {
-						continue
-					}
-
-					pv.Set(reflect.New(pv.Type().Elem()))
-				}
-
 				var val reflect.Value
 				if s.converter != nil {
 					val = s.converter.ValueFromDestination(vals[i])
