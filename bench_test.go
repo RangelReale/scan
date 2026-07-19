@@ -53,6 +53,10 @@ func TestMain(m *testing.M) {
 		}
 	}
 
+	if err := prepareWideDupData(ctx, "wide45dup", 45, 50); err != nil {
+		panic(err)
+	}
+
 	exitVal := m.Run()
 
 	os.Exit(exitVal)
@@ -308,6 +312,63 @@ func BenchmarkScanWide15Nested(b *testing.B) {
 
 func BenchmarkScanWide15NestedConverter(b *testing.B) {
 	benchmarkScanWideOpts[Wide15Nested](b, "wide15", WithTypeConverter(benchConverter{}))
+}
+
+// prepareWideDupData is like prepareWideData except col_0 carries only
+// fanin distinct values, mimicking a to-one join key shared by many rows.
+func prepareWideDupData(ctx context.Context, table string, numCols, fanin int) error {
+	colDefs := make([]string, numCols)
+	colAssigns := make([]string, numCols)
+	for i := range colDefs {
+		colDefs[i] = fmt.Sprintf("col_%d=string", i)
+		colAssigns[i] = fmt.Sprintf("col_%d=?", i)
+	}
+
+	create := fmt.Sprintf("CREATE|%s|%s", table, strings.Join(colDefs, ","))
+	if _, err := db.ExecContext(ctx, create); err != nil {
+		return err
+	}
+
+	insert := fmt.Sprintf("INSERT|%s|%s", table, strings.Join(colAssigns, ","))
+	args := make([]any, numCols)
+	for i := 0; i < wideSize; i++ {
+		args[0] = fmt.Sprintf("key_%d", i%fanin)
+		for c := 1; c < numCols; c++ {
+			args[c] = fmt.Sprintf("value_%d_%d", i, c)
+		}
+		if _, err := db.ExecContext(ctx, insert, args...); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func BenchmarkScanWide45DupConverter(b *testing.B) {
+	benchmarkScanWideOpts[Wide45](b, "wide45dup",
+		WithTypeConverter(countingConverter{scans: new(int)}))
+}
+
+func BenchmarkScanWide45DupRowSkip(b *testing.B) {
+	b.StopTimer()
+	ctx := context.Background()
+
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		rows, err := db.Query("SELECT|wide45dup||")
+		if err != nil {
+			panic(err)
+		}
+		seen := firstSeen() // a fresh "cache" per query, like a caller would use
+		b.StartTimer()
+		if _, err := AllFromRows(ctx, StructMapper[Wide45](
+			WithTypeConverter(countingConverter{scans: new(int)}),
+			WithRowSkip([]string{"col_0"}, seen),
+		), rows); err != nil {
+			panic(err)
+		}
+		rows.Close()
+	}
 }
 
 func benchmarkScanWideOpts[T any](b *testing.B, table string, opts ...MappingOption) {

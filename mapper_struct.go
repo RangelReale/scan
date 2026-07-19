@@ -2,6 +2,7 @@ package scan
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -108,6 +109,8 @@ type mappingOptions struct {
 	rowValidator    RowValidator
 	mapperMods      []MapperMod
 	structTagPrefix string
+	rowSkipKeys     []string
+	rowSkipSeen     func([]reflect.Value) bool
 }
 
 // MappingeOption is a function type that changes how the mapper is generated
@@ -153,11 +156,13 @@ func mapperFromMapping[T any](m mapping, typ reflect.Type, isPointer bool, opts 
 		}
 
 		mapper := regular[T]{
-			typ:       typ,
-			isPointer: isPointer,
-			filtered:  filtered,
-			converter: opts.typeConverter,
-			validator: opts.rowValidator,
+			typ:         typ,
+			isPointer:   isPointer,
+			filtered:    filtered,
+			converter:   opts.typeConverter,
+			validator:   opts.rowValidator,
+			rowSkipKeys: opts.rowSkipKeys,
+			rowSkipSeen: opts.rowSkipSeen,
 		}
 		switch {
 		case opts.typeConverter == nil && opts.rowValidator == nil:
@@ -170,11 +175,13 @@ func mapperFromMapping[T any](m mapping, typ reflect.Type, isPointer bool, opts 
 }
 
 type regular[T any] struct {
-	isPointer bool
-	typ       reflect.Type
-	filtered  mapping
-	converter TypeConverter
-	validator RowValidator
+	isPointer   bool
+	typ         reflect.Type
+	filtered    mapping
+	converter   TypeConverter
+	validator   RowValidator
+	rowSkipKeys []string
+	rowSkipSeen func([]reflect.Value) bool
 }
 
 func (s regular[T]) regular() (func(*Row) (any, error), func(any) (T, error)) {
@@ -273,12 +280,45 @@ func (s regular[T]) allOptions() (func(*Row) (any, error), func(any) (T, error))
 	scratch := make([]reflect.Value, len(s.filtered))
 	var link any = scratch
 
+	makeDest := func(i int) reflect.Value {
+		if s.converter != nil {
+			return s.converter.TypeToDestination(ftypes[i])
+		}
+		return reflect.New(ftypes[i])
+	}
+
+	skip := buildRowSkipPlan(s.filtered, s.rowSkipKeys, s.rowSkipSeen)
+	if skip != nil {
+		skip.makeDest = makeDest
+		skip.scratch = scratch
+		// delegating a non-skipped column's scan needs the destination to
+		// be a sql.Scanner; probe one to decide for the query
+		if _, ok := makeDest(skip.conds[0].idx).Interface().(sql.Scanner); !ok {
+			skip = nil
+		}
+	}
+
 	return func(v *Row) (any, error) {
+			if skip != nil {
+				skip.state.decided = false
+			}
+
 			for i, info := range s.filtered {
-				if s.converter != nil {
-					scratch[i] = s.converter.TypeToDestination(ftypes[i])
-				} else {
-					scratch[i] = reflect.New(ftypes[i])
+				if skip != nil {
+					if slot := skip.condSlot[i]; slot >= 0 {
+						// the destination is created lazily by the
+						// condDest, and only when the row is not skipped
+						v.ScheduleScanByIndex(info.colIndex, &skip.conds[slot])
+						continue
+					}
+				}
+
+				scratch[i] = makeDest(i)
+
+				if skip != nil {
+					if slot := skip.keySlot[i]; slot >= 0 {
+						skip.keyVals[slot] = scratch[i]
+					}
 				}
 
 				v.ScheduleScanByIndexX(info.colIndex, scratch[i])
@@ -287,6 +327,43 @@ func (s regular[T]) allOptions() (func(*Row) (any, error), func(any) (T, error))
 			return link, nil
 		}, func(v any) (T, error) {
 			vals := v.([]reflect.Value)
+
+			if skip != nil && skip.skipped() {
+				// the row is already known: only the key columns were
+				// decoded, so build a value carrying just those — the
+				// caller promised to substitute its own copy of the row
+				row := reflect.New(styp).Elem()
+				for _, path := range inits {
+					pv := row.FieldByIndex(path)
+					pv.Set(reflect.New(pv.Type().Elem()))
+				}
+
+				for i, info := range s.filtered {
+					if skip.keySlot[i] < 0 {
+						continue
+					}
+
+					var val reflect.Value
+					if s.converter != nil {
+						val = s.converter.ValueFromDestination(vals[i])
+					} else {
+						val = vals[i].Elem()
+					}
+
+					fv := row.FieldByIndex(info.position)
+					if info.isPointer {
+						fv.Elem().Set(val)
+					} else {
+						fv.Set(val)
+					}
+				}
+
+				if s.isPointer {
+					row = row.Addr()
+				}
+
+				return row.Interface().(T), nil
+			}
 
 			if s.validator != nil && !s.validator(colNames, vals) {
 				var t T
