@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"reflect"
 	"strings"
 	"syscall"
 	"testing"
@@ -244,6 +245,87 @@ type Wide45 struct {
 	Col42 string `db:"col_42"`
 	Col43 string `db:"col_43"`
 	Col44 string `db:"col_44"`
+}
+
+// benchConverter is a minimal pass-through TypeConverter: it scans into the
+// field's own type, so the benchmarks measure the allOptions machinery itself.
+type benchConverter struct{}
+
+func (benchConverter) TypeToDestination(t reflect.Type) reflect.Value { return reflect.New(t) }
+
+func (benchConverter) ValueFromDestination(v reflect.Value) reflect.Value { return v.Elem() }
+
+func benchValidator(cols []string, vals []reflect.Value) bool { return true }
+
+func BenchmarkScanWide15Converter(b *testing.B) {
+	benchmarkScanWideOpts[Wide15](b, "wide15", WithTypeConverter(benchConverter{}))
+}
+
+func BenchmarkScanWide45Converter(b *testing.B) {
+	benchmarkScanWideOpts[Wide45](b, "wide45", WithTypeConverter(benchConverter{}))
+}
+
+func BenchmarkScanWide45Validator(b *testing.B) {
+	benchmarkScanWideOpts[Wide45](b, "wide45", WithRowValidator(benchValidator))
+}
+
+func BenchmarkScanWide45ConverterValidator(b *testing.B) {
+	benchmarkScanWideOpts[Wide45](b, "wide45",
+		WithTypeConverter(benchConverter{}), WithRowValidator(benchValidator))
+}
+
+// Wide15Nested spreads the 15 columns over two embedded pointer structs, so
+// every row initializes the mapping's nested-pointer init paths.
+type Wide15Nested struct {
+	*Wide15NestedA
+	*Wide15NestedB
+}
+
+type Wide15NestedA struct {
+	Col0 string `db:"col_0"`
+	Col1 string `db:"col_1"`
+	Col2 string `db:"col_2"`
+	Col3 string `db:"col_3"`
+	Col4 string `db:"col_4"`
+	Col5 string `db:"col_5"`
+	Col6 string `db:"col_6"`
+	Col7 string `db:"col_7"`
+}
+
+type Wide15NestedB struct {
+	Col8  string `db:"col_8"`
+	Col9  string `db:"col_9"`
+	Col10 string `db:"col_10"`
+	Col11 string `db:"col_11"`
+	Col12 string `db:"col_12"`
+	Col13 string `db:"col_13"`
+	Col14 string `db:"col_14"`
+}
+
+func BenchmarkScanWide15Nested(b *testing.B) {
+	benchmarkScanWide[Wide15Nested](b, "wide15")
+}
+
+func BenchmarkScanWide15NestedConverter(b *testing.B) {
+	benchmarkScanWideOpts[Wide15Nested](b, "wide15", WithTypeConverter(benchConverter{}))
+}
+
+func benchmarkScanWideOpts[T any](b *testing.B, table string, opts ...MappingOption) {
+	b.StopTimer()
+	ctx := context.Background()
+
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		rows, err := db.Query("SELECT|" + table + "||")
+		if err != nil {
+			panic(err)
+		}
+		b.StartTimer()
+		if _, err := AllFromRows(ctx, StructMapper[T](opts...), rows); err != nil {
+			panic(err)
+		}
+		rows.Close()
+	}
 }
 
 type Userss struct {
