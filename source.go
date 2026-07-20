@@ -272,3 +272,18 @@ func filterColumns(c cols, m mapping, prefix string) (mapping, error) {
 
 	return filtered, nil
 }
+
+func filterIsSet(m mapping) (mapping, mapping, error) {
+	// Filter the mapping so we only ask for the available columns
+	filtered := make(mapping, 0, len(m))
+	isSet := make(mapping, 0, len(m))
+	for _, name := range m {
+		if cs, ok := name.tagOptions["checkset"]; ok && cs != "" {
+			isSet = append(isSet, name)
+		} else {
+			filtered = append(filtered, name)
+		}
+	}
+
+	return filtered, isSet, nil
+}

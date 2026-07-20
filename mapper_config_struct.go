@@ -337,12 +337,13 @@ func (s regularConfig[T]) allOptions() (func(*Row) (any, error), func(any) (T, e
 					if sourceVal.IsNil() {
 						break // NULL non-PK field: leave zero value
 					}
+					sourceVal = sourceVal.Elem()
 				}
 				var val reflect.Value
 				if s.converter != nil {
 					val = s.converter.ValueFromDestination(sourceVal)
 				} else {
-					val = sourceVal.Elem()
+					val = sourceVal
 				}
 
 				fv := row.FieldByIndex(info.position)
