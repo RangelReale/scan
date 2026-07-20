@@ -179,8 +179,10 @@ func (s *mapperSourceImpl) setMappings(typ reflect.Type, prefix string, v visite
 		}
 
 		// Skip columns that have the tag "-"
-		tag := strings.Split(field.Tag.Get(s.structTagKey), ",")[0]
-		if tag == "-" {
+		tag := parseTag(field.Tag.Get(s.structTagKey))
+
+		// tag := strings.Split(field.Tag.Get(s.structTagKey), ",")[0]
+		if tag.Name == "-" {
 			continue
 		}
 
@@ -194,8 +196,8 @@ func (s *mapperSourceImpl) setMappings(typ reflect.Type, prefix string, v visite
 				sep = s.columnSeparator
 			}
 
-			name := tag
-			if tag == "" {
+			name := tag.Name
+			if name == "" {
 				name = s.fieldMapperFn(field.Name)
 			}
 

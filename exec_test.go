@@ -359,8 +359,8 @@ func TestAllowUnknownColumns(t *testing.T) {
 func TestStructConfig(t *testing.T) {
 	type structConfig struct {
 		User     *User
-		TaggedID *int
-		Tagged   *Tagged
+		TaggedID *int    `dbopt:"join-optional"`
+		Tagged   *Tagged `dbopt:"join-optional"`
 	}
 
 	user1 := User{ID: 1, Name: "foo"}
