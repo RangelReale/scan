@@ -26,6 +26,7 @@ type mapinfo struct {
 	colIndex   int
 	position   []int
 	init       [][]int
+	itemInit   [][]int
 	isPointer  bool
 	tagOptions map[string]string
 }

@@ -359,7 +359,7 @@ func TestAllowUnknownColumns(t *testing.T) {
 func TestStructConfig(t *testing.T) {
 	type structConfig struct {
 		User          *User
-		TaggedIDIsSet *int    `db:"tag.tag_id,clone"`
+		TaggedIDIsSet *int    `db:"-,clone"`
 		Tagged        *Tagged `db:",optional-if=ID"`
 	}
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -130,7 +131,7 @@ func (s *mapperSourceImpl) getMapping(typ reflect.Type) (mapping, error) {
 		return m, nil
 	}
 
-	s.setMappings(typ, "", make(visited), &m, nil)
+	s.setMappings(typ, "", make(visited), &m, nil, nil)
 
 	s.mutex.Lock()
 	s.cache[typ] = m
@@ -139,7 +140,7 @@ func (s *mapperSourceImpl) getMapping(typ reflect.Type) (mapping, error) {
 	return m, nil
 }
 
-func (s *mapperSourceImpl) setMappings(typ reflect.Type, prefix string, v visited, m *mapping, inits [][]int, position ...int) {
+func (s *mapperSourceImpl) setMappings(typ reflect.Type, prefix string, v visited, m *mapping, inits [][]int, currentInits [][]int, position ...int) {
 	count := v[typ]
 	if count > s.maxDepth {
 		return
@@ -171,6 +172,8 @@ func (s *mapperSourceImpl) setMappings(typ reflect.Type, prefix string, v visite
 	// Go through the struct fields and populate the map.
 	// Recursively go into any child structs, adding a prefix where necessary
 	for i := 0; i < typ.NumField(); i++ {
+		itemInits := slices.Clone(currentInits)
+
 		field := typ.Field(i)
 
 		// Don't consider unexported fields
@@ -210,12 +213,13 @@ func (s *mapperSourceImpl) setMappings(typ reflect.Type, prefix string, v visite
 
 		if fieldType.Kind() == reflect.Pointer {
 			inits = append(inits, currentIndex)
+			itemInits = append(itemInits, currentIndex)
 			fieldType = fieldType.Elem()
 			isPointer = true
 		}
 
 		if fieldType.Kind() == reflect.Struct {
-			s.setMappings(field.Type, key, v.copy(), m, inits, currentIndex...)
+			s.setMappings(field.Type, key, v.copy(), m, inits, itemInits, currentIndex...)
 			continue
 		}
 
@@ -223,6 +227,7 @@ func (s *mapperSourceImpl) setMappings(typ reflect.Type, prefix string, v visite
 			name:       key,
 			position:   currentIndex,
 			init:       inits,
+			itemInit:   currentInits,
 			isPointer:  isPointer,
 			tagOptions: tag.Attr,
 		})

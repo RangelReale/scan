@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"reflect"
+	"strings"
 )
 
 // Uses reflection to create a mapping function for a struct type
@@ -212,7 +213,7 @@ func (s regularConfig[T]) allOptions() (func(*Row) (any, error), func(any) (T, e
 	}
 
 	colNames := s.filtered.cols()
-	inits := uniqueInits(s.filtered)
+	// inits := uniqueInits(s.filtered)
 
 	// scanOneRow calls before/scan/after strictly in sequence for each row
 	// and the mapper is built once per query, so the destinations slice can
@@ -324,12 +325,14 @@ func (s regularConfig[T]) allOptions() (func(*Row) (any, error), func(any) (T, e
 
 			row := reflect.New(styp).Elem()
 
-			// row is freshly zero, so each unique nested pointer is
-			// initialized exactly once, ancestors before descendants
-			for _, path := range inits {
-				pv := row.FieldByIndex(path)
-				pv.Set(reflect.New(pv.Type().Elem()))
-			}
+			// // row is freshly zero, so each unique nested pointer is
+			// // initialized exactly once, ancestors before descendants
+			// for _, path := range inits {
+			// 	pv := row.FieldByIndex(path)
+			// 	pv.Set(reflect.New(pv.Type().Elem()))
+			// }
+
+			initsDone := map[string]struct{}{}
 
 			for i, info := range s.filtered {
 				sourceVal := vals[i].Elem()
@@ -339,6 +342,22 @@ func (s regularConfig[T]) allOptions() (func(*Row) (any, error), func(any) (T, e
 					}
 					sourceVal = sourceVal.Elem()
 				}
+
+				for _, path := range info.itemInit {
+					var ikey []string
+					for _, key := range path {
+						ikey = append(ikey, fmt.Sprintf("%d", key))
+					}
+					ikeyName := strings.Join(ikey, ".")
+					if _, ok := initsDone[ikeyName]; ok {
+						continue
+					}
+					initsDone[ikeyName] = struct{}{}
+
+					pv := row.FieldByIndex(path)
+					pv.Set(reflect.New(pv.Type().Elem()))
+				}
+
 				var val reflect.Value
 				if s.converter != nil {
 					val = s.converter.ValueFromDestination(sourceVal)
