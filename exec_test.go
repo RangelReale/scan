@@ -358,9 +358,9 @@ func TestAllowUnknownColumns(t *testing.T) {
 
 func TestStructConfig(t *testing.T) {
 	type structConfig struct {
-		User          *User
-		TaggedIDIsSet *int    `db:"-,clone"`
-		Tagged        *Tagged `db:",optional-if=ID"`
+		User   *User
+		NV     sql.NullString
+		Tagged *Tagged `db:",optional-if=ID"`
 	}
 
 	user1 := User{ID: 1, Name: "foo"}
@@ -368,6 +368,7 @@ func TestStructConfig(t *testing.T) {
 
 	structConfig1 := structConfig{
 		User: &user1,
+		NV:   sql.NullString{String: "55", Valid: true},
 		Tagged: &Tagged{
 			ID:   93,
 			Name: "x-tag",
@@ -378,9 +379,9 @@ func TestStructConfig(t *testing.T) {
 	}
 
 	testQuery(t, "user", queryCase[structConfig]{
-		columns:   strstr{{"user.id", "int64"}, {"user.name", "string"}, {"tagged.tag_id", "nullint64"}, {"tagged.tag_name", "nullstring"}},
-		rows:      rows{[]any{1, "foo", 93, "x-tag"}, []any{2, "bar", nil, nil}},
-		query:     []string{"user.id", "user.name", "tagged.tag_id", "tagged.tag_name"},
+		columns:   strstr{{"user.id", "int64"}, {"user.name", "string"}, {"nv", "nullstring"}, {"tagged.tag_id", "nullint64"}, {"tagged.tag_name", "nullstring"}},
+		rows:      rows{[]any{1, "foo", "55", 93, "x-tag"}, []any{2, "bar", nil, nil, nil}},
+		query:     []string{"user.id", "user.name", "nv", "tagged.tag_id", "tagged.tag_name"},
 		mapper:    StructConfigMapper[structConfig](),
 		expectOne: structConfig1,
 		expectAll: []structConfig{structConfig1, structConfig2},
