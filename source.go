@@ -220,10 +220,11 @@ func (s *mapperSourceImpl) setMappings(typ reflect.Type, prefix string, v visite
 		}
 
 		*m = append(*m, mapinfo{
-			name:      key,
-			position:  currentIndex,
-			init:      inits,
-			isPointer: isPointer,
+			name:       key,
+			position:   currentIndex,
+			init:       inits,
+			isPointer:  isPointer,
+			tagOptions: tag.Attr,
 		})
 	}
 

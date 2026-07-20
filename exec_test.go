@@ -358,17 +358,15 @@ func TestAllowUnknownColumns(t *testing.T) {
 
 func TestStructConfig(t *testing.T) {
 	type structConfig struct {
-		User     *User
-		TaggedID *int    `db:"tagged.tag_id,optional"`
-		Tagged   *Tagged `db:",optional-if=TaggedID"`
+		User   *User
+		Tagged *Tagged `db:",optional-if=ID"`
 	}
 
 	user1 := User{ID: 1, Name: "foo"}
 	user2 := User{ID: 2, Name: "bar"}
 
 	structConfig1 := structConfig{
-		User:     &user1,
-		TaggedID: toPtr(93),
+		User: &user1,
 		Tagged: &Tagged{
 			ID:   93,
 			Name: "x-tag",
@@ -382,7 +380,7 @@ func TestStructConfig(t *testing.T) {
 		columns:   strstr{{"user.id", "int64"}, {"user.name", "string"}, {"tagged.tag_id", "nullint64"}, {"tagged.tag_name", "nullstring"}},
 		rows:      rows{[]any{1, "foo", 93, "x-tag"}, []any{2, "bar", nil, nil}},
 		query:     []string{"user.id", "user.name", "tagged.tag_id", "tagged.tag_name"},
-		mapper:    StructMapper[structConfig](),
+		mapper:    StructConfigMapper[structConfig](),
 		expectOne: structConfig1,
 		expectAll: []structConfig{structConfig1, structConfig2},
 	})
