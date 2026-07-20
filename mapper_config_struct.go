@@ -2,6 +2,7 @@ package scan
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"reflect"
 )
@@ -136,13 +137,7 @@ func mapperConfigFromMapping[T any](m mapping, typ reflect.Type, isPointer bool,
 			// rowSkipKeys: opts.rowSkipKeys,
 			// rowSkipSeen: opts.rowSkipSeen,
 		}
-		switch {
-		case opts.typeConverter == nil && opts.rowValidator == nil:
-			return mapper.regular()
-
-		default:
-			return mapper.allOptions()
-		}
+		return mapper.allOptions()
 	}
 }
 
@@ -156,49 +151,51 @@ type regularConfig[T any] struct {
 	// rowSkipSeen func([]reflect.Value) bool
 }
 
-func (s regularConfig[T]) regular() (func(*Row) (any, error), func(any) (T, error)) {
-	// The mappingConfig is fixed for the duration of the query, so everything that
-	// only depends on it is resolved here, once, instead of once per row.
-	styp := s.typ
-	if s.isPointer {
-		styp = s.typ.Elem()
-	}
-	inits := uniqueInits(s.filtered)
+// func (s regularConfig[T]) regular() (func(*Row) (any, error), func(any) (T, error)) {
+// 	// The mappingConfig is fixed for the duration of the query, so everything that
+// 	// only depends on it is resolved here, once, instead of once per row.
+// 	styp := s.typ
+// 	if s.isPointer {
+// 		styp = s.typ.Elem()
+// 	}
+// 	inits := uniqueInits(s.filtered)
+//
+// 	// scanOneRow calls before/scan/after strictly in sequence for each row
+// 	// and the mapper is built once per query, so the link holder can be
+// 	// reused across rows, avoiding a per-row boxing allocation.
+// 	link := new(rowLink)
+//
+// 	return func(v *Row) (any, error) {
+// 			row := reflect.New(styp).Elem()
+//
+// 			// row is freshly zero, so each unique nested pointer is
+// 			// initialized exactly once, ancestors before descendants,
+// 			// before any field address is scheduled
+// 			for _, path := range inits {
+// 				pv := row.FieldByIndex(path)
+// 				pv.Set(reflect.New(pv.Type().Elem()))
+// 			}
+//
+// 			for _, info := range s.filtered {
+// 				fv := row.FieldByIndex(info.position)
+// 				v.ScheduleScanByIndexX(info.colIndex, fv.Addr())
+// 			}
+//
+// 			link.v = row
+//
+// 			return link, nil
+// 		}, func(v any) (T, error) {
+// 			row := v.(*rowLink).v
+//
+// 			if s.isPointer {
+// 				row = row.Addr()
+// 			}
+//
+// 			return row.Interface().(T), nil
+// 		}
+// }
 
-	// scanOneRow calls before/scan/after strictly in sequence for each row
-	// and the mapper is built once per query, so the link holder can be
-	// reused across rows, avoiding a per-row boxing allocation.
-	link := new(rowLink)
-
-	return func(v *Row) (any, error) {
-			row := reflect.New(styp).Elem()
-
-			// row is freshly zero, so each unique nested pointer is
-			// initialized exactly once, ancestors before descendants,
-			// before any field address is scheduled
-			for _, path := range inits {
-				pv := row.FieldByIndex(path)
-				pv.Set(reflect.New(pv.Type().Elem()))
-			}
-
-			for _, info := range s.filtered {
-				fv := row.FieldByIndex(info.position)
-				v.ScheduleScanByIndexX(info.colIndex, fv.Addr())
-			}
-
-			link.v = row
-
-			return link, nil
-		}, func(v any) (T, error) {
-			row := v.(*rowLink).v
-
-			if s.isPointer {
-				row = row.Addr()
-			}
-
-			return row.Interface().(T), nil
-		}
-}
+var scannerIface = reflect.TypeFor[sql.Scanner]()
 
 func (s regularConfig[T]) allOptions() (func(*Row) (any, error), func(any) (T, error)) {
 	// The mapping is fixed for the duration of the query: the field types,
@@ -225,10 +222,21 @@ func (s regularConfig[T]) allOptions() (func(*Row) (any, error), func(any) (T, e
 	var link any = scratch
 
 	makeDest := func(i int) reflect.Value {
+		var destValue reflect.Value
 		if s.converter != nil {
-			return s.converter.TypeToDestination(ftypes[i])
+			destValue = s.converter.TypeToDestination(ftypes[i])
+		} else if ftypes[i].Implements(scannerIface) || reflect.PointerTo(ftypes[i]).Implements(scannerIface) {
+			// If the field type is itself a nullable/Scanner type (pgtype.Text,
+			// uuid.NullUUID, a custom Scanner), don't double-wrap — one level is
+			// enough and its own decode/Valid handles NULL. Otherwise use **T.
+			destValue = reflect.New(ftypes[i])
+			return destValue
+		} else {
+			destValue = reflect.New(ftypes[i])
 		}
-		return reflect.New(ftypes[i])
+		outputValue := reflect.New(reflect.PointerTo(ftypes[i]))
+		outputValue.Elem().Set(destValue)
+		return outputValue
 	}
 
 	// skip := buildRowSkipPlan(s.filtered, s.rowSkipKeys, s.rowSkipSeen)
@@ -324,11 +332,17 @@ func (s regularConfig[T]) allOptions() (func(*Row) (any, error), func(any) (T, e
 			}
 
 			for i, info := range s.filtered {
+				sourceVal := vals[i].Elem()
+				if sourceVal.Kind() == reflect.Pointer {
+					if sourceVal.IsNil() {
+						break // NULL non-PK field: leave zero value
+					}
+				}
 				var val reflect.Value
 				if s.converter != nil {
-					val = s.converter.ValueFromDestination(vals[i])
+					val = s.converter.ValueFromDestination(sourceVal)
 				} else {
-					val = vals[i].Elem()
+					val = sourceVal.Elem()
 				}
 
 				fv := row.FieldByIndex(info.position)
